@@ -1,8 +1,94 @@
 {% extends 'base.html' %}
 
-{% block head %}
-<h1>Template</h1>
-{% endblock %}
+{% block title %}Calquate - Calculate Your Calories, Transform Your Life{% endblock %}
 
 {% block body %}
+<section class="hero">
+    <div class="hero-badge">
+        ⚡ Smart Calorie Tracking
+    </div>
+    
+    <h1 class="hero-title">
+        <span class="highlight">Calquate</span><br>
+        Your Numbers
+    </h1>
+    
+    <p class="hero-subtitle">
+        The intelligent calorie calculator and nutrition tracker. 
+        Scan barcodes, search foods, and hit your macros with precision.
+    </p>
+    
+    <div class="hero-buttons">
+        {% if user %}
+            <a href="{{ url_for('dashboard') }}" class="btn btn-primary btn-lg">Go to Dashboard</a>
+            <a href="{{ url_for('food_search') }}" class="btn btn-secondary btn-lg">Search Food</a>
+        {% else %}
+            <a href="{{ url_for('register') }}" class="btn btn-primary btn-lg">Start Free →</a>
+            <a href="{{ url_for('calculator') }}" class="btn btn-secondary btn-lg">Try Calculator</a>
+        {% endif %}
+    </div>
+    
+    <div class="hero-stats">
+        <div class="hero-stat">
+            <div class="hero-stat-value">1M+</div>
+            <div class="hero-stat-label">Foods in Database</div>
+        </div>
+        <div class="hero-stat">
+            <div class="hero-stat-value">100%</div>
+            <div class="hero-stat-label">Free to Use</div>
+        </div>
+        <div class="hero-stat">
+            <div class="hero-stat-value">⚡</div>
+            <div class="hero-stat-label">Instant Results</div>
+        </div>
+    </div>
+</section>
+
+<section class="features">
+    <div class="card feature-card card-glow">
+        <div class="feature-icon">📊</div>
+        <h3 class="feature-title">Precision Macro Tracking</h3>
+        <p class="feature-desc">Track calories, protein, carbs, and fats with scientific accuracy. See exactly where your nutrition stands.</p>
+    </div>
+    
+    <div class="card feature-card card-glow">
+        <div class="feature-icon">📷</div>
+        <h3 class="feature-title">Barcode Scanner</h3>
+        <p class="feature-desc">Point your camera at any product barcode and instantly get complete nutrition facts. No typing required.</p>
+    </div>
+    
+    <div class="card feature-card card-glow">
+        <div class="feature-icon">🔍</div>
+        <h3 class="feature-title">Massive Food Database</h3>
+        <p class="feature-desc">Access over 1 million foods and products from Open Food Facts. Find anything you eat.</p>
+    </div>
+    
+    <div class="card feature-card card-glow">
+        <div class="feature-icon">🧮</div>
+        <h3 class="feature-title">BMI & BMR Calculator</h3>
+        <p class="feature-desc">Calculate your Body Mass Index, Basal Metabolic Rate, and daily calorie needs based on your activity level.</p>
+    </div>
+    
+    <div class="card feature-card card-glow">
+        <div class="feature-icon">📅</div>
+        <h3 class="feature-title">Daily Food Diary</h3>
+        <p class="feature-desc">Log meals by breakfast, lunch, dinner, and snacks. Track your progress over time with detailed history.</p>
+    </div>
+    
+    <div class="card feature-card card-glow">
+        <div class="feature-icon">🎯</div>
+        <h3 class="feature-title">Goal Setting</h3>
+        <p class="feature-desc">Set personalized calorie targets for weight loss, maintenance, or muscle gain. Stay on track with visual progress.</p>
+    </div>
+</section>
+
+<section style="text-align: center; padding: 4rem 1rem; margin-top: 2rem;">
+    <h2 style="margin-bottom: 1rem;">Ready to <span class="text-gold">Calquate</span>?</h2>
+    <p style="color: var(--text-secondary); margin-bottom: 2rem; max-width: 500px; margin-left: auto; margin-right: auto;">
+        Join thousands of users who trust Calquate to manage their nutrition and reach their fitness goals.
+    </p>
+    {% if not user %}
+    <a href="{{ url_for('register') }}" class="btn btn-primary btn-lg">Create Free Account</a>
+    {% endif %}
+</section>
 {% endblock %}

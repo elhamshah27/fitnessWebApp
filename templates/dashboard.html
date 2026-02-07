@@ -1,0 +1,149 @@
+{% extends 'base.html' %}
+
+{% block title %}Dashboard - Calquate{% endblock %}
+
+{% block body %}
+<div class="dashboard-header">
+    <p class="greeting">{{ today.strftime('%A, %B %d') }}</p>
+    <h1>Hey, {{ user.username }}! ⚡</h1>
+</div>
+
+<div class="grid grid-3 mb-4">
+    <!-- Calorie Ring -->
+    <div class="card" style="grid-column: span 1;">
+        <div class="calorie-ring">
+            <svg width="100%" height="100%" viewBox="0 0 200 200">
+                <defs>
+                    <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                        <stop offset="0%" stop-color="#fbbf24"/>
+                        <stop offset="100%" stop-color="#f59e0b"/>
+                    </linearGradient>
+                </defs>
+                <circle class="calorie-ring-bg" cx="100" cy="100" r="85"/>
+                {% set progress = (totals.calories / calorie_goal * 100) if calorie_goal > 0 else 0 %}
+                {% set dashoffset = 534 - (534 * min(progress, 100) / 100) %}
+                <circle class="calorie-ring-progress" cx="100" cy="100" r="85" 
+                        stroke-dasharray="534" 
+                        stroke-dashoffset="{{ dashoffset }}"/>
+            </svg>
+            <div class="calorie-ring-text">
+                <span class="calorie-remaining">{{ (calorie_goal - totals.calories)|int }}</span>
+                <span class="calorie-label">remaining</span>
+            </div>
+        </div>
+        <div class="text-center mt-2">
+            <p style="color: var(--text-secondary);">{{ totals.calories|int }} / {{ calorie_goal|int }} kcal</p>
+        </div>
+    </div>
+    
+    <!-- Macro Cards -->
+    <div class="card stat-card">
+        <div class="stat-value stat-value-purple">{{ totals.protein|int }}g</div>
+        <div class="stat-label">Protein</div>
+        <div class="progress-container">
+            <div class="progress-bar progress-protein" style="width: {{ min(totals.protein / (calorie_goal * 0.075) * 100 if calorie_goal else 0, 100) }}%"></div>
+        </div>
+    </div>
+    
+    <div class="card stat-card">
+        <div class="stat-value" style="color: #60a5fa;">{{ totals.carbs|int }}g</div>
+        <div class="stat-label">Carbs</div>
+        <div class="progress-container">
+            <div class="progress-bar progress-carbs" style="width: {{ min(totals.carbs / (calorie_goal * 0.125) * 100 if calorie_goal else 0, 100) }}%"></div>
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-2 mb-4">
+    <div class="card stat-card">
+        <div class="stat-value" style="color: #f87171;">{{ totals.fat|int }}g</div>
+        <div class="stat-label">Fat</div>
+        <div class="progress-container">
+            <div class="progress-bar progress-fat" style="width: {{ min(totals.fat / (calorie_goal * 0.035) * 100 if calorie_goal else 0, 100) }}%"></div>
+        </div>
+    </div>
+    
+    <div class="card stat-card">
+        <div class="stat-value stat-value-gold">{{ totals.fiber|int }}g</div>
+        <div class="stat-label">Fiber</div>
+        <div class="progress-container">
+            <div class="progress-bar progress-calories" style="width: {{ min(totals.fiber / 30 * 100, 100) }}%"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="flex gap-2 mb-4" style="flex-wrap: wrap;">
+    <a href="{{ url_for('food_search') }}" class="btn btn-primary">
+        🔍 Add Food
+    </a>
+    <a href="{{ url_for('barcode_scanner') }}" class="btn btn-secondary">
+        📷 Scan Barcode
+    </a>
+    <a href="{{ url_for('food_diary') }}" class="btn btn-secondary">
+        📅 View Diary
+    </a>
+</div>
+
+<!-- Today's Meals -->
+<h2 class="mb-3">Today's Meals</h2>
+
+{% set meal_icons = {'breakfast': '🌅', 'lunch': '☀️', 'dinner': '🌙', 'snack': '🍎'} %}
+{% set meal_names = {'breakfast': 'Breakfast', 'lunch': 'Lunch', 'dinner': 'Dinner', 'snack': 'Snacks'} %}
+
+{% for meal_type, items in meals.items() %}
+<div class="meal-section">
+    <div class="meal-header">
+        <div class="meal-title">
+            <span class="meal-icon">{{ meal_icons[meal_type] }}</span>
+            <span>{{ meal_names[meal_type] }}</span>
+        </div>
+        <span class="meal-calories">{{ (items | sum(attribute='calories') * items | sum(attribute='serving_size') / (items|length) if items else 0)|int }} kcal</span>
+    </div>
+    
+    {% if items %}
+    <div class="meal-items">
+        {% for item in items %}
+        <div class="meal-item" data-id="{{ item.id }}">
+            <div class="meal-item-info">
+                <div class="meal-item-name">{{ item.food_name }}</div>
+                <div class="meal-item-serving">{{ item.serving_size }} {{ item.serving_unit }}</div>
+            </div>
+            <span class="meal-item-calories">{{ (item.calories * item.serving_size)|int }} kcal</span>
+            <button class="meal-item-delete" onclick="deleteFood({{ item.id }})" title="Remove">✕</button>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="meal-items">
+        <div class="empty-state" style="padding: 1rem;">
+            <p>No {{ meal_names[meal_type]|lower }} logged yet</p>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endfor %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function deleteFood(logId) {
+    if (!confirm('Remove this food from your diary?')) return;
+    
+    try {
+        const response = await fetch(`/api/food/log/${logId}`, {
+            method: 'DELETE'
+        });
+        const data = await response.json();
+        
+        if (data.success) {
+            location.reload();
+        } else {
+            alert('Failed to delete food');
+        }
+    } catch (err) {
+        alert('Error deleting food');
+    }
+}
+</script>
+{% endblock %}

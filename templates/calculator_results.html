@@ -1,0 +1,132 @@
+{% extends 'base.html' %}
+
+{% block title %}Your Results - Calquate{% endblock %}
+
+{% block body %}
+<div class="auth-container" style="max-width: 700px;">
+    <div class="card">
+        <div class="card-header text-center">
+            <h1 class="card-title">⚡ Your Results</h1>
+            <p class="card-subtitle">Based on your body stats and activity level</p>
+        </div>
+        
+        <!-- BMI Result -->
+        <div class="grid grid-2 mb-4">
+            <div class="card stat-card" style="background: var(--bg-elevated);">
+                <div class="stat-value stat-value-gold">{{ bmi }}</div>
+                <div class="stat-label">BMI</div>
+                <div class="mt-1">
+                    <span style="font-weight: 600; color: {% if category == 'Normal weight' %}var(--accent-green){% elif category == 'Underweight' %}var(--accent-blue){% else %}var(--accent-red){% endif %};">
+                        {{ category }}
+                    </span>
+                </div>
+            </div>
+            
+            <div class="card stat-card" style="background: var(--bg-elevated);">
+                <div class="stat-value stat-value-purple">{{ bmr|int }}</div>
+                <div class="stat-label">BMR (cal/day)</div>
+                <div class="mt-1" style="color: var(--text-muted); font-size: 0.875rem;">
+                    Calories at rest
+                </div>
+            </div>
+        </div>
+        
+        <!-- TDEE -->
+        <div class="card mb-4" style="background: var(--gradient-primary); padding: 2rem; text-align: center; border: none;">
+            <h2 style="color: var(--bg-dark); margin-bottom: 0.5rem; font-size: 1.25rem;">Your Daily Calorie Need</h2>
+            <div style="font-size: 4rem; font-weight: 800; color: var(--bg-dark); font-family: 'Syne', sans-serif; line-height: 1;">
+                {{ tdee|int }}
+            </div>
+            <p style="color: rgba(0,0,0,0.6); margin-top: 0.5rem;">calories/day to maintain weight</p>
+        </div>
+        
+        <!-- Calorie Goals Table -->
+        <h3 class="mb-2">Calorie Goals by Objective</h3>
+        <div class="table-container mb-4">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Goal</th>
+                        <th>Calories/day</th>
+                        <th>Deficit/Surplus</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>
+                            <strong>Extreme weight loss</strong>
+                            <br><small style="color: var(--text-muted);">~2 lb/week</small>
+                        </td>
+                        <td><strong>{{ (tdee|int - 1000) }}</strong></td>
+                        <td style="color: var(--accent-red);">-1000</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <strong>Weight loss</strong>
+                            <br><small style="color: var(--text-muted);">~1 lb/week</small>
+                        </td>
+                        <td><strong>{{ (tdee|int - 500) }}</strong></td>
+                        <td style="color: var(--accent-red);">-500</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <strong>Mild weight loss</strong>
+                            <br><small style="color: var(--text-muted);">~0.5 lb/week</small>
+                        </td>
+                        <td><strong>{{ (tdee|int - 250) }}</strong></td>
+                        <td style="color: var(--accent-red);">-250</td>
+                    </tr>
+                    <tr style="background: rgba(251, 191, 36, 0.1);">
+                        <td>
+                            <strong>Maintain weight</strong>
+                        </td>
+                        <td><strong class="text-gold">{{ tdee|int }}</strong></td>
+                        <td style="color: var(--primary);">0</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <strong>Mild weight gain</strong>
+                            <br><small style="color: var(--text-muted);">~0.5 lb/week</small>
+                        </td>
+                        <td><strong>{{ (tdee|int + 250) }}</strong></td>
+                        <td style="color: var(--accent-green);">+250</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <strong>Weight gain</strong>
+                            <br><small style="color: var(--text-muted);">~1 lb/week</small>
+                        </td>
+                        <td><strong>{{ (tdee|int + 500) }}</strong></td>
+                        <td style="color: var(--accent-green);">+500</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Action Buttons -->
+        <div class="flex gap-2" style="flex-wrap: wrap;">
+            <a href="{{ url_for('calculator') }}" class="btn btn-secondary">
+                ← Recalculate
+            </a>
+            
+            {% if user %}
+            <form method="POST" action="{{ url_for('save_stats') }}" style="flex: 1;">
+                <input type="hidden" name="height" value="{{ height }}">
+                <input type="hidden" name="weight" value="{{ weight }}">
+                <input type="hidden" name="age" value="{{ age }}">
+                <input type="hidden" name="gender" value="{{ gender }}">
+                <input type="hidden" name="activity" value="{{ activity }}">
+                <input type="hidden" name="tdee" value="{{ tdee }}">
+                <button type="submit" class="btn btn-primary btn-block">
+                    Save to My Profile ⚡
+                </button>
+            </form>
+            {% else %}
+            <a href="{{ url_for('register') }}" class="btn btn-primary" style="flex: 1; text-align: center;">
+                Sign Up to Save Results
+            </a>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

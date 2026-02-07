@@ -1,27 +1,298 @@
 {% extends 'base.html' %}
 
-{% block head %}
-<h1>Food Search</h1>
-{% endblock %}
+{% block title %}Food Search - Calquate{% endblock %}
 
 {% block body %}
-    <!-- Displays any error messages. -->
-    {% if err %}
-        <p style="color: red">{{err}}</p>
-    {% endif %}
-    <!-- form for the search. -->
-    <form method="POST" action="{{ url_for('food_search') }}")>
-        <input type="text" 
-               name="food" 
-               placeholder="Enter food">
-        <button type="submit">Search</button>
-    </form>
-    <!-- displays the food. -->
-    {% if food %}
-        <p>{{food}}</p>
-    {% endif %}
-    {% if img %}
-        <img src="{{img}}" style="max-width: 100%; height: auto; margin-top: 20px;">
-    {% endif %}
+<div class="text-center mb-4">
+    <h1>Search Food ⚡</h1>
+    <p style="color: var(--text-secondary);">Find nutrition info for any food or ingredient</p>
+</div>
+
+<!-- Search Bar -->
+<div class="search-container">
+    <span class="search-icon">🔍</span>
+    <input type="text" 
+           class="search-input" 
+           id="searchInput"
+           placeholder="Search for food (e.g., banana, chicken, rice...)"
+           autocomplete="off">
+</div>
+
+<!-- Quick Actions -->
+<div class="flex gap-2 mb-4" style="justify-content: center; flex-wrap: wrap;">
+    <a href="{{ url_for('barcode_scanner') }}" class="btn btn-secondary">
+        📷 Scan Barcode Instead
+    </a>
+</div>
+
+<!-- Loading State -->
+<div class="loading hidden" id="loadingState">
+    <div class="spinner"></div>
+</div>
+
+<!-- Results -->
+<div id="searchResults" class="grid" style="gap: 1rem;"></div>
+
+<!-- Empty State -->
+<div class="empty-state" id="emptyState">
+    <div class="empty-icon">🍽️</div>
+    <h3 class="empty-title">Start searching</h3>
+    <p>Type a food name above to see nutrition info</p>
+</div>
+
+<!-- No Results -->
+<div class="empty-state hidden" id="noResults">
+    <div class="empty-icon">🔍</div>
+    <h3 class="empty-title">No results found</h3>
+    <p>Try a different search term or scan a barcode</p>
+</div>
+
+<!-- Food Detail Modal -->
+<div class="modal-overlay" id="foodModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 class="modal-title" id="modalFoodName">Food Name</h2>
+            <button class="modal-close" onclick="closeModal()">×</button>
+        </div>
+        <div class="modal-body">
+            <div id="modalFoodImage" style="text-align: center; margin-bottom: 1rem;"></div>
+            <p id="modalFoodBrand" style="color: var(--text-muted); margin-bottom: 1rem;"></p>
+            
+            <!-- Nutrition Facts -->
+            <div class="card mb-3" style="background: var(--bg-elevated);">
+                <h4 class="mb-2">Nutrition Facts <small style="color: var(--text-muted);">(per 100g)</small></h4>
+                <div class="grid grid-2" style="gap: 0.75rem;">
+                    <div class="flex justify-between">
+                        <span>Calories</span>
+                        <strong id="modalCalories" class="text-gold">0</strong>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Protein</span>
+                        <strong id="modalProtein" class="text-purple">0g</strong>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Carbs</span>
+                        <strong id="modalCarbs" class="text-blue">0g</strong>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Fat</span>
+                        <strong id="modalFat" class="text-red">0g</strong>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Fiber</span>
+                        <strong id="modalFiber">0g</strong>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Sugar</span>
+                        <strong id="modalSugar">0g</strong>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Log Form -->
+            <h4 class="mb-2">Add to Diary</h4>
+            <div class="grid grid-2" style="gap: 1rem;">
+                <div class="form-group mb-0">
+                    <label class="form-label">Serving Size</label>
+                    <input type="number" class="form-input" id="servingSize" value="1" min="0.1" step="0.1">
+                </div>
+                <div class="form-group mb-0">
+                    <label class="form-label">Unit</label>
+                    <select class="form-select" id="servingUnit">
+                        <option value="serving">serving (100g)</option>
+                        <option value="g">grams</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="form-group mt-2">
+                <label class="form-label">Meal</label>
+                <select class="form-select" id="mealType">
+                    <option value="breakfast">🌅 Breakfast</option>
+                    <option value="lunch">☀️ Lunch</option>
+                    <option value="dinner">🌙 Dinner</option>
+                    <option value="snack" selected>🍎 Snack</option>
+                </select>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="logFood()">Add to Diary ⚡</button>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
+{% block scripts %}
+<script>
+let searchTimeout;
+let selectedFood = null;
+
+const searchInput = document.getElementById('searchInput');
+const searchResults = document.getElementById('searchResults');
+const loadingState = document.getElementById('loadingState');
+const emptyState = document.getElementById('emptyState');
+const noResults = document.getElementById('noResults');
+const foodModal = document.getElementById('foodModal');
+
+// Search on input
+searchInput.addEventListener('input', (e) => {
+    clearTimeout(searchTimeout);
+    const query = e.target.value.trim();
+    
+    if (query.length < 2) {
+        searchResults.innerHTML = '';
+        emptyState.classList.remove('hidden');
+        noResults.classList.add('hidden');
+        return;
+    }
+    
+    searchTimeout = setTimeout(() => searchFood(query), 300);
+});
+
+async function searchFood(query) {
+    emptyState.classList.add('hidden');
+    noResults.classList.add('hidden');
+    loadingState.classList.remove('hidden');
+    searchResults.innerHTML = '';
+    
+    try {
+        const response = await fetch(`/api/food/search?q=${encodeURIComponent(query)}`);
+        const data = await response.json();
+        
+        loadingState.classList.add('hidden');
+        
+        if (data.products && data.products.length > 0) {
+            renderResults(data.products);
+        } else {
+            noResults.classList.remove('hidden');
+        }
+    } catch (error) {
+        loadingState.classList.add('hidden');
+        noResults.classList.remove('hidden');
+        console.error('Search error:', error);
+    }
+}
+
+function renderResults(products) {
+    searchResults.innerHTML = products.map((product, index) => `
+        <div class="food-card" onclick='selectFood(${JSON.stringify(product).replace(/'/g, "\\'")})'>
+            <img class="food-image" 
+                 src="${product.image || '/static/food-placeholder.svg'}" 
+                 alt="${product.name}"
+                 onerror="this.src='/static/food-placeholder.svg'">
+            <div class="food-info">
+                <div class="food-name">${product.name || 'Unknown'}</div>
+                <div class="food-brand">${product.brand || 'Generic'}</div>
+                <div class="food-macros">
+                    <span class="macro-item macro-calories">⚡ ${Math.round(product.calories || 0)}</span>
+                    <span class="macro-item macro-protein">P ${Math.round(product.protein || 0)}g</span>
+                    <span class="macro-item macro-carbs">C ${Math.round(product.carbs || 0)}g</span>
+                    <span class="macro-item macro-fat">F ${Math.round(product.fat || 0)}g</span>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function selectFood(product) {
+    selectedFood = product;
+    
+    document.getElementById('modalFoodName').textContent = product.name || 'Unknown Food';
+    document.getElementById('modalFoodBrand').textContent = product.brand || '';
+    
+    if (product.image) {
+        document.getElementById('modalFoodImage').innerHTML = `<img src="${product.image}" style="max-width: 150px; border-radius: var(--radius);" onerror="this.style.display='none'">`;
+    } else {
+        document.getElementById('modalFoodImage').innerHTML = '';
+    }
+    
+    document.getElementById('modalCalories').textContent = Math.round(product.calories || 0);
+    document.getElementById('modalProtein').textContent = Math.round(product.protein || 0) + 'g';
+    document.getElementById('modalCarbs').textContent = Math.round(product.carbs || 0) + 'g';
+    document.getElementById('modalFat').textContent = Math.round(product.fat || 0) + 'g';
+    document.getElementById('modalFiber').textContent = Math.round(product.fiber || 0) + 'g';
+    document.getElementById('modalSugar').textContent = Math.round(product.sugar || 0) + 'g';
+    
+    // Reset form
+    document.getElementById('servingSize').value = 1;
+    document.getElementById('servingUnit').value = 'serving';
+    
+    // Set meal based on time
+    const hour = new Date().getHours();
+    let meal = 'snack';
+    if (hour >= 5 && hour < 11) meal = 'breakfast';
+    else if (hour >= 11 && hour < 15) meal = 'lunch';
+    else if (hour >= 17 && hour < 21) meal = 'dinner';
+    document.getElementById('mealType').value = meal;
+    
+    foodModal.classList.add('active');
+}
+
+function closeModal() {
+    foodModal.classList.remove('active');
+    selectedFood = null;
+}
+
+async function logFood() {
+    if (!selectedFood) return;
+    
+    const servingSize = parseFloat(document.getElementById('servingSize').value) || 1;
+    const servingUnit = document.getElementById('servingUnit').value;
+    const mealType = document.getElementById('mealType').value;
+    
+    // If unit is grams, adjust the serving size (divide by 100 since values are per 100g)
+    const multiplier = servingUnit === 'g' ? servingSize / 100 : servingSize;
+    
+    try {
+        const response = await fetch('/api/food/log', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                name: selectedFood.name,
+                brand: selectedFood.brand,
+                barcode: selectedFood.barcode,
+                serving_size: multiplier,
+                serving_unit: servingUnit === 'g' ? `${servingSize}g` : 'serving',
+                meal_type: mealType,
+                calories: selectedFood.calories || 0,
+                protein: selectedFood.protein || 0,
+                carbs: selectedFood.carbs || 0,
+                fat: selectedFood.fat || 0,
+                fiber: selectedFood.fiber || 0,
+                sugar: selectedFood.sugar || 0,
+                sodium: selectedFood.sodium || 0
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            closeModal();
+            alert('Food added to your diary! ⚡');
+            window.location.href = '/dashboard';
+        } else {
+            alert('Failed to log food: ' + (data.error || 'Unknown error'));
+        }
+    } catch (error) {
+        alert('Error logging food');
+        console.error(error);
+    }
+}
+
+// Close modal on overlay click
+foodModal.addEventListener('click', (e) => {
+    if (e.target === foodModal) closeModal();
+});
+
+// Close modal on escape
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeModal();
+});
+
+// Focus search on load
+searchInput.focus();
+</script>
+{% endblock %}

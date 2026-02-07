@@ -1,25 +1,50 @@
 {% extends 'base.html' %}
 
-{% block head %}
-<h1>Login</h1>
-{% endblock %}
+{% block title %}Login - Calquate{% endblock %}
 
 {% block body %}
-    {% with messages = get_flashed_messages() %}
-        {% if messages %}
-            {% for msg in messages %}
-                <p style="color: red">{{msg}}</p>
-            {% endfor %}
-        {% endif %}
-    {% endwith %}
-<form method="POST" action="{{ url_for('login') }}">
-    <input type="text"
-           name="username"
-           placeholder="Username">
-    <input type="password"
-           name="password"
-           placeholder="Password">
-    <button type="submit">Login</button>
-</form>
-
+<div class="auth-container">
+    <div class="card auth-card">
+        <div class="auth-header">
+            <div class="auth-logo">
+                <div class="logo-mark">
+                    <span class="logo-c">C</span>
+                    <span class="logo-bolt">⚡</span>
+                </div>
+            </div>
+            <h1 class="auth-title">Welcome Back</h1>
+            <p class="auth-subtitle">Sign in to continue tracking</p>
+        </div>
+        
+        <form method="POST" action="{{ url_for('login') }}">
+            <div class="form-group">
+                <label class="form-label" for="username">Username</label>
+                <input type="text" 
+                       class="form-input" 
+                       id="username"
+                       name="username" 
+                       placeholder="Enter your username"
+                       required
+                       autocomplete="username">
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label" for="password">Password</label>
+                <input type="password" 
+                       class="form-input" 
+                       id="password"
+                       name="password" 
+                       placeholder="Enter your password"
+                       required
+                       autocomplete="current-password">
+            </div>
+            
+            <button type="submit" class="btn btn-primary btn-block btn-lg">Sign In</button>
+        </form>
+        
+        <p class="auth-footer">
+            Don't have an account? <a href="{{ url_for('register') }}">Sign up free</a>
+        </p>
+    </div>
+</div>
 {% endblock %}
