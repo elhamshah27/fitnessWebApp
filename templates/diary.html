@@ -1,0 +1,165 @@
+{% extends 'base.html' %}
+
+{% block title %}Food Diary - Calquate{% endblock %}
+
+{% block body %}
+<div class="flex justify-between items-center mb-4" style="flex-wrap: wrap; gap: 1rem;">
+    <div>
+        <h1 style="margin-bottom: 0.25rem;">Food Diary ⚡</h1>
+        <p style="color: var(--text-secondary);">{{ selected_date.strftime('%A, %B %d, %Y') }}</p>
+    </div>
+    
+    <!-- Date Navigation -->
+    <div class="flex gap-1 items-center">
+        {% set prev_date = selected_date.toordinal() - 1 %}
+        {% set next_date = selected_date.toordinal() + 1 %}
+        <a href="{{ url_for('food_diary', date=(selected_date.fromordinal(prev_date)).strftime('%Y-%m-%d')) }}" 
+           class="btn btn-secondary btn-sm">← Prev</a>
+        
+        <input type="date" 
+               class="form-input" 
+               id="datePicker" 
+               value="{{ selected_date.strftime('%Y-%m-%d') }}"
+               onchange="goToDate(this.value)"
+               style="width: auto;">
+        
+        {% if selected_date < selected_date.today() %}
+        <a href="{{ url_for('food_diary', date=(selected_date.fromordinal(next_date)).strftime('%Y-%m-%d')) }}" 
+           class="btn btn-secondary btn-sm">Next →</a>
+        {% else %}
+        <span class="btn btn-secondary btn-sm" style="opacity: 0.5; cursor: not-allowed;">Next →</span>
+        {% endif %}
+        
+        {% if selected_date != selected_date.today() %}
+        <a href="{{ url_for('food_diary') }}" class="btn btn-primary btn-sm">Today</a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Daily Summary -->
+<div class="card mb-4">
+    <h3 class="mb-3">Daily Summary</h3>
+    
+    <div class="grid grid-4" style="gap: 1rem; text-align: center;">
+        <div>
+            <div style="font-size: 1.75rem; font-weight: 700;" class="text-gold">{{ totals.calories|int }}</div>
+            <div style="color: var(--text-muted); font-size: 0.875rem;">/ {{ calorie_goal|int }} cal</div>
+            <div class="progress-container mt-1">
+                <div class="progress-bar progress-calories" style="width: {{ min(totals.calories / calorie_goal * 100 if calorie_goal else 0, 100) }}%"></div>
+            </div>
+        </div>
+        
+        <div>
+            <div style="font-size: 1.75rem; font-weight: 700;" class="text-purple">{{ totals.protein|int }}g</div>
+            <div style="color: var(--text-muted); font-size: 0.875rem;">Protein</div>
+        </div>
+        
+        <div>
+            <div style="font-size: 1.75rem; font-weight: 700;" class="text-blue">{{ totals.carbs|int }}g</div>
+            <div style="color: var(--text-muted); font-size: 0.875rem;">Carbs</div>
+        </div>
+        
+        <div>
+            <div style="font-size: 1.75rem; font-weight: 700;" class="text-red">{{ totals.fat|int }}g</div>
+            <div style="color: var(--text-muted); font-size: 0.875rem;">Fat</div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="flex gap-2 mb-4" style="flex-wrap: wrap;">
+    <a href="{{ url_for('food_search') }}" class="btn btn-primary">
+        🔍 Add Food
+    </a>
+    <a href="{{ url_for('barcode_scanner') }}" class="btn btn-secondary">
+        📷 Scan Barcode
+    </a>
+</div>
+
+<!-- Meals -->
+{% set meal_icons = {'breakfast': '🌅', 'lunch': '☀️', 'dinner': '🌙', 'snack': '🍎'} %}
+{% set meal_names = {'breakfast': 'Breakfast', 'lunch': 'Lunch', 'dinner': 'Dinner', 'snack': 'Snacks'} %}
+
+{% for meal_type, items in meals.items() %}
+<div class="meal-section">
+    <div class="meal-header">
+        <div class="meal-title">
+            <span class="meal-icon">{{ meal_icons[meal_type] }}</span>
+            <span>{{ meal_names[meal_type] }}</span>
+        </div>
+        {% set meal_cals = items | sum(attribute='calories') if items else 0 %}
+        <span class="meal-calories">{{ meal_cals|int }} kcal</span>
+    </div>
+    
+    {% if items %}
+    <div class="meal-items">
+        {% for item in items %}
+        <div class="meal-item" data-id="{{ item.id }}">
+            <div class="meal-item-info">
+                <div class="meal-item-name">{{ item.food_name }}</div>
+                <div class="meal-item-serving">
+                    {{ item.serving_size }} {{ item.serving_unit }}
+                    {% if item.brand %} • {{ item.brand }}{% endif %}
+                </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <div style="text-align: right;">
+                    <div class="meal-item-calories">{{ (item.calories * item.serving_size)|int }} kcal</div>
+                    <div style="font-size: 0.75rem; color: var(--text-muted);">
+                        P: {{ (item.protein * item.serving_size)|int }}g • 
+                        C: {{ (item.carbs * item.serving_size)|int }}g • 
+                        F: {{ (item.fat * item.serving_size)|int }}g
+                    </div>
+                </div>
+                <button class="meal-item-delete" onclick="deleteFood({{ item.id }})" title="Remove">✕</button>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="meal-items">
+        <div class="empty-state" style="padding: 1.5rem;">
+            <p>No {{ meal_names[meal_type]|lower }} logged</p>
+            <a href="{{ url_for('food_search') }}" class="btn btn-sm btn-secondary mt-1">+ Add Food</a>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endfor %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function goToDate(dateStr) {
+    window.location.href = `/diary?date=${dateStr}`;
+}
+
+async function deleteFood(logId) {
+    if (!confirm('Remove this food from your diary?')) return;
+    
+    try {
+        const response = await fetch(`/api/food/log/${logId}`, {
+            method: 'DELETE'
+        });
+        const data = await response.json();
+        
+        if (data.success) {
+            const item = document.querySelector(`[data-id="${logId}"]`);
+            if (item) {
+                item.style.animation = 'slideOut 0.3s ease forwards';
+                setTimeout(() => {
+                    item.remove();
+                    location.reload();
+                }, 300);
+            }
+        } else {
+            alert('Failed to delete food');
+        }
+    } catch (err) {
+        alert('Error deleting food');
+        console.error(err);
+    }
+}
+</script>
+{% endblock %}

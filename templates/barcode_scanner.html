@@ -1,0 +1,281 @@
+{% extends 'base.html' %}
+
+{% block title %}Barcode Scanner - Calquate{% endblock %}
+
+{% block head %}
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+{% endblock %}
+
+{% block body %}
+<div class="text-center mb-4">
+    <h1>Scan Barcode ⚡</h1>
+    <p style="color: var(--text-secondary);">Point your camera at a product barcode</p>
+</div>
+
+<div class="scanner-container">
+    <!-- Scanner Preview -->
+    <div class="scanner-preview mb-3">
+        <div id="reader"></div>
+    </div>
+    
+    <!-- Scanner Controls -->
+    <div class="flex gap-2 mb-3" style="justify-content: center;">
+        <button class="btn btn-primary" id="startBtn" onclick="startScanner()">
+            📷 Start Camera
+        </button>
+        <button class="btn btn-secondary hidden" id="stopBtn" onclick="stopScanner()">
+            ⏹️ Stop Camera
+        </button>
+    </div>
+    
+    <!-- Manual Entry -->
+    <div class="card">
+        <h3 class="mb-2">Or enter barcode manually</h3>
+        <div class="flex gap-2">
+            <input type="text" 
+                   class="form-input" 
+                   id="manualBarcode" 
+                   placeholder="Enter barcode number"
+                   style="flex: 1;">
+            <button class="btn btn-primary" onclick="lookupBarcode()">
+                Search
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Loading State -->
+<div class="loading hidden" id="loadingState">
+    <div class="spinner"></div>
+</div>
+
+<!-- Result Display -->
+<div class="hidden mt-4" id="resultContainer">
+    <div class="card" id="productCard">
+        <div class="flex gap-3" style="align-items: flex-start;">
+            <img id="productImage" src="" alt="" style="width: 100px; height: 100px; object-fit: cover; border-radius: var(--radius); background: var(--bg-input);">
+            <div style="flex: 1;">
+                <h2 id="productName" style="margin-bottom: 0.25rem;">Product Name</h2>
+                <p id="productBrand" style="color: var(--text-muted); margin-bottom: 1rem;"></p>
+                
+                <div class="food-macros" style="font-size: 1rem;">
+                    <span class="macro-item macro-calories">⚡ <span id="productCalories">0</span></span>
+                    <span class="macro-item macro-protein">P <span id="productProtein">0</span>g</span>
+                    <span class="macro-item macro-carbs">C <span id="productCarbs">0</span>g</span>
+                    <span class="macro-item macro-fat">F <span id="productFat">0</span>g</span>
+                </div>
+            </div>
+        </div>
+        
+        <hr style="border: none; border-top: 1px solid var(--border); margin: 1.5rem 0;">
+        
+        <!-- Log Form -->
+        <h4 class="mb-2">Add to Diary</h4>
+        <div class="grid grid-3" style="gap: 1rem;">
+            <div class="form-group mb-0">
+                <label class="form-label">Servings</label>
+                <input type="number" class="form-input" id="servingSize" value="1" min="0.1" step="0.1">
+            </div>
+            <div class="form-group mb-0">
+                <label class="form-label">Meal</label>
+                <select class="form-select" id="mealType">
+                    <option value="breakfast">🌅 Breakfast</option>
+                    <option value="lunch">☀️ Lunch</option>
+                    <option value="dinner">🌙 Dinner</option>
+                    <option value="snack" selected>🍎 Snack</option>
+                </select>
+            </div>
+            <div class="form-group mb-0">
+                <label class="form-label">&nbsp;</label>
+                <button class="btn btn-primary btn-block" onclick="logFood()">Add ⚡</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Not Found State -->
+<div class="empty-state hidden mt-4" id="notFoundState">
+    <div class="empty-icon">📦</div>
+    <h3 class="empty-title">Product not found</h3>
+    <p>This barcode isn't in our database. Try searching by name instead.</p>
+    <a href="{{ url_for('food_search') }}" class="btn btn-primary mt-2">Search Food</a>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let html5QrcodeScanner = null;
+let currentProduct = null;
+
+const startBtn = document.getElementById('startBtn');
+const stopBtn = document.getElementById('stopBtn');
+const loadingState = document.getElementById('loadingState');
+const resultContainer = document.getElementById('resultContainer');
+const notFoundState = document.getElementById('notFoundState');
+
+function startScanner() {
+    startBtn.classList.add('hidden');
+    stopBtn.classList.remove('hidden');
+    
+    html5QrcodeScanner = new Html5Qrcode("reader");
+    
+    const config = {
+        fps: 10,
+        qrbox: { width: 250, height: 100 },
+        aspectRatio: 1.333,
+        formatsToSupport: [
+            Html5QrcodeSupportedFormats.EAN_13,
+            Html5QrcodeSupportedFormats.EAN_8,
+            Html5QrcodeSupportedFormats.UPC_A,
+            Html5QrcodeSupportedFormats.UPC_E,
+            Html5QrcodeSupportedFormats.CODE_128,
+            Html5QrcodeSupportedFormats.CODE_39
+        ]
+    };
+    
+    html5QrcodeScanner.start(
+        { facingMode: "environment" },
+        config,
+        onScanSuccess,
+        onScanFailure
+    ).catch(err => {
+        console.error("Unable to start scanner:", err);
+        alert("Could not start camera. Please check permissions or try manual entry.");
+        stopScanner();
+    });
+}
+
+function stopScanner() {
+    if (html5QrcodeScanner) {
+        html5QrcodeScanner.stop().then(() => {
+            html5QrcodeScanner.clear();
+            html5QrcodeScanner = null;
+        }).catch(err => console.error("Error stopping scanner:", err));
+    }
+    
+    startBtn.classList.remove('hidden');
+    stopBtn.classList.add('hidden');
+}
+
+function onScanSuccess(decodedText, decodedResult) {
+    // Vibrate on success (if supported)
+    if (navigator.vibrate) navigator.vibrate(100);
+    
+    // Stop scanner and look up barcode
+    stopScanner();
+    fetchProduct(decodedText);
+}
+
+function onScanFailure(error) {
+    // Ignore scan failures (happens constantly until barcode found)
+}
+
+function lookupBarcode() {
+    const barcode = document.getElementById('manualBarcode').value.trim();
+    if (barcode) {
+        fetchProduct(barcode);
+    }
+}
+
+async function fetchProduct(barcode) {
+    loadingState.classList.remove('hidden');
+    resultContainer.classList.add('hidden');
+    notFoundState.classList.add('hidden');
+    
+    try {
+        const response = await fetch(`/api/food/barcode/${barcode}`);
+        const data = await response.json();
+        
+        loadingState.classList.add('hidden');
+        
+        if (data.found) {
+            displayProduct(data.product);
+        } else {
+            notFoundState.classList.remove('hidden');
+        }
+    } catch (error) {
+        loadingState.classList.add('hidden');
+        notFoundState.classList.remove('hidden');
+        console.error('Lookup error:', error);
+    }
+}
+
+function displayProduct(product) {
+    currentProduct = product;
+    
+    document.getElementById('productName').textContent = product.name || 'Unknown Product';
+    document.getElementById('productBrand').textContent = product.brand || '';
+    
+    const img = document.getElementById('productImage');
+    if (product.image) {
+        img.src = product.image;
+        img.style.display = 'block';
+    } else {
+        img.style.display = 'none';
+    }
+    
+    document.getElementById('productCalories').textContent = Math.round(product.calories || 0);
+    document.getElementById('productProtein').textContent = Math.round(product.protein || 0);
+    document.getElementById('productCarbs').textContent = Math.round(product.carbs || 0);
+    document.getElementById('productFat').textContent = Math.round(product.fat || 0);
+    
+    // Set meal based on time
+    const hour = new Date().getHours();
+    let meal = 'snack';
+    if (hour >= 5 && hour < 11) meal = 'breakfast';
+    else if (hour >= 11 && hour < 15) meal = 'lunch';
+    else if (hour >= 17 && hour < 21) meal = 'dinner';
+    document.getElementById('mealType').value = meal;
+    
+    resultContainer.classList.remove('hidden');
+}
+
+async function logFood() {
+    if (!currentProduct) return;
+    
+    const servingSize = parseFloat(document.getElementById('servingSize').value) || 1;
+    const mealType = document.getElementById('mealType').value;
+    
+    try {
+        const response = await fetch('/api/food/log', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                name: currentProduct.name,
+                brand: currentProduct.brand,
+                barcode: currentProduct.barcode,
+                serving_size: servingSize,
+                serving_unit: 'serving',
+                meal_type: mealType,
+                calories: currentProduct.calories || 0,
+                protein: currentProduct.protein || 0,
+                carbs: currentProduct.carbs || 0,
+                fat: currentProduct.fat || 0,
+                fiber: currentProduct.fiber || 0,
+                sugar: currentProduct.sugar || 0,
+                sodium: currentProduct.sodium || 0
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            alert('Food added to your diary! ⚡');
+            window.location.href = '/dashboard';
+        } else {
+            alert('Failed to log food: ' + (data.error || 'Unknown error'));
+        }
+    } catch (error) {
+        alert('Error logging food');
+        console.error(error);
+    }
+}
+
+// Handle Enter key on manual input
+document.getElementById('manualBarcode').addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') lookupBarcode();
+});
+</script>
+{% endblock %}

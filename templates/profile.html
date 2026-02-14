@@ -1,0 +1,114 @@
+{% extends 'base.html' %}
+
+{% block title %}Profile - Calquate{% endblock %}
+
+{% block body %}
+<div class="auth-container" style="max-width: 600px;">
+    <div class="card">
+        <div class="card-header">
+            <h1 class="card-title">Your Profile ⚡</h1>
+            <p class="card-subtitle">Manage your account and fitness settings</p>
+        </div>
+        
+        <form method="POST" action="{{ url_for('profile') }}">
+            <div class="form-group">
+                <label class="form-label" for="email">Email</label>
+                <input type="email" 
+                       class="form-input" 
+                       id="email"
+                       name="email" 
+                       value="{{ user.email }}"
+                       required>
+            </div>
+            
+            <hr style="border: none; border-top: 1px solid var(--border); margin: 1.5rem 0;">
+            
+            <h3 class="mb-2">Body Stats</h3>
+            
+            <div class="grid grid-2">
+                <div class="form-group">
+                    <label class="form-label" for="height">Height (cm)</label>
+                    <input type="number" 
+                           class="form-input" 
+                           id="height"
+                           name="height" 
+                           value="{{ user.height or '' }}"
+                           placeholder="e.g. 175"
+                           step="0.1">
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label" for="weight">Weight (kg)</label>
+                    <input type="number" 
+                           class="form-input" 
+                           id="weight"
+                           name="weight" 
+                           value="{{ user.weight or '' }}"
+                           placeholder="e.g. 70"
+                           step="0.1">
+                </div>
+            </div>
+            
+            <div class="grid grid-2">
+                <div class="form-group">
+                    <label class="form-label" for="age">Age</label>
+                    <input type="number" 
+                           class="form-input" 
+                           id="age"
+                           name="age" 
+                           value="{{ user.age or '' }}"
+                           placeholder="e.g. 25">
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Gender</label>
+                    <div class="form-radio-group">
+                        <label class="form-radio">
+                            <input type="radio" name="gender" value="male" {{ 'checked' if user.gender == 'male' else '' }}>
+                            Male
+                        </label>
+                        <label class="form-radio">
+                            <input type="radio" name="gender" value="female" {{ 'checked' if user.gender == 'female' else '' }}>
+                            Female
+                        </label>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label" for="activity">Activity Level</label>
+                <select class="form-select" id="activity" name="activity">
+                    <option value="1.2" {{ 'selected' if user.activity_level == 1.2 else '' }}>Sedentary (little or no exercise)</option>
+                    <option value="1.375" {{ 'selected' if user.activity_level == 1.375 else '' }}>Lightly active (1-3 days/week)</option>
+                    <option value="1.55" {{ 'selected' if user.activity_level == 1.55 else '' }}>Moderately active (3-5 days/week)</option>
+                    <option value="1.725" {{ 'selected' if user.activity_level == 1.725 else '' }}>Very active (6-7 days/week)</option>
+                    <option value="1.9" {{ 'selected' if user.activity_level == 1.9 else '' }}>Super active (physical job + exercise)</option>
+                </select>
+            </div>
+            
+            <hr style="border: none; border-top: 1px solid var(--border); margin: 1.5rem 0;">
+            
+            <h3 class="mb-2">Goals</h3>
+            
+            <div class="form-group">
+                <label class="form-label" for="calorie_goal">Daily Calorie Goal</label>
+                <input type="number" 
+                       class="form-input" 
+                       id="calorie_goal"
+                       name="calorie_goal" 
+                       value="{{ user.calorie_goal or '' }}"
+                       placeholder="Leave empty to auto-calculate from TDEE">
+                <small style="color: var(--text-muted); display: block; margin-top: 0.5rem;">
+                    {% if user.calculate_tdee() %}
+                        Your estimated TDEE: <strong class="text-gold">{{ user.calculate_tdee()|int }}</strong> calories/day
+                    {% else %}
+                        Fill in your body stats to calculate your TDEE
+                    {% endif %}
+                </small>
+            </div>
+            
+            <button type="submit" class="btn btn-primary btn-block btn-lg">Save Changes ⚡</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
