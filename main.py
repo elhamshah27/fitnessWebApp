@@ -20,7 +20,19 @@ app.jinja_env.globals.update(min=min, max=max)
 # Configuration - Use environment variables in production
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 app.permanent_session_lifetime = timedelta(days=5)
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///database.db')
+# For Vercel: Use Vercel Postgres or external database
+# SQLite won't work on Vercel (read-only filesystem)
+# Get connection string from Vercel Postgres dashboard
+database_url = os.environ.get('DATABASE_URL')
+if not database_url:
+    # Fallback to SQLite for local development only
+    database_url = 'sqlite:///database.db'
+    
+# Convert Vercel Postgres URL format if needed
+if database_url and database_url.startswith('postgres://'):
+    database_url = database_url.replace('postgres://', 'postgresql://', 1)
+
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # API Keys - Get free keys from:
@@ -105,8 +117,15 @@ class FoodLog(db.Model):
 
 
 # Create all tables after models are defined
-with app.app_context():
-    db.create_all()
+# Only create tables if not in Vercel serverless environment
+# (Tables should be created via migrations or manually on Vercel Postgres)
+if not os.environ.get('VERCEL'):
+    with app.app_context():
+        try:
+            db.create_all()
+        except Exception as e:
+            # Silently fail in serverless - tables should exist already
+            pass
 
 
 # ============== DECORATORS ==============
@@ -647,6 +666,12 @@ def server_error(e):
 # ============== MAIN ==============
 
 if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
-    app.run(debug=True)
+    if not os.environ.get('VERCEL'):
+        with app.app_context():
+            try:
+                db.create_all()
+            except Exception as e:
+                pass
+    # Only run in debug mode for local development
+    # In production, use: gunicorn main:app
+    app.run(debug=os.environ.get('FLASK_DEBUG', 'False').lower() == 'true', host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
