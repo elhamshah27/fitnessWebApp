@@ -1,1 +1,6 @@
 .env
+instance/
+__pycache__/
+*.pyc
+tests/test.db
+tests/__pycache__/
