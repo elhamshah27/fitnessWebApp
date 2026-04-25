@@ -65,6 +65,30 @@ db = SQLAlchemy(model_class=Base)
 db.init_app(app)
 
 
+# Database initialization and schema migrations
+def init_db():
+    """Create tables and handle schema migrations."""
+    with app.app_context():
+        try:
+            # Create all tables that don't exist
+            db.create_all()
+
+            # Add missing columns to existing tables (schema migration)
+            with db.engine.begin() as conn:
+                inspector = db.inspect(db.engine)
+                columns = [col['name'] for col in inspector.get_columns('users')]
+
+                # Add supabase_id column if it doesn't exist
+                if 'supabase_id' not in columns:
+                    conn.exec_driver_sql(
+                        'ALTER TABLE users ADD COLUMN supabase_id VARCHAR(100) UNIQUE'
+                    )
+        except Exception as e:
+            # Table might not exist yet, or column already exists
+            # SQLAlchemy will create tables on first access if needed
+            pass
+
+
 # ============== DATABASE MODELS ==============
 
 class User(db.Model):
@@ -170,6 +194,10 @@ def get_current_user():
             session.clear()
         return user
     return None
+
+
+# Initialize database schema
+init_db()
 
 
 # ============== ROUTES ==============
