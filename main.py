@@ -38,10 +38,18 @@ if database_url and database_url.startswith('postgres://'):
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Supabase client
-_supabase_url = os.environ.get('SUPABASE_URL', '')
-_supabase_key = os.environ.get('SUPABASE_KEY', '')
-supabase: Client = create_client(_supabase_url, _supabase_key)
+# Supabase client — lazy so missing env vars don't crash startup
+_supabase_client: Client | None = None
+
+def get_supabase() -> Client:
+    global _supabase_client
+    if _supabase_client is None:
+        url = os.environ.get('SUPABASE_URL', '')
+        key = os.environ.get('SUPABASE_KEY', '')
+        if not url or not key:
+            raise RuntimeError("SUPABASE_URL and SUPABASE_KEY environment variables are not set")
+        _supabase_client = create_client(url, key)
+    return _supabase_client
 
 # API Keys - Get free keys from:
 # Edamam: https://developer.edamam.com/edamam-nutrition-api (Free tier: 10 calls/minute)
@@ -240,7 +248,7 @@ def login():
         password = request.form['password']
 
         try:
-            auth_resp = supabase.auth.sign_in_with_password({"email": email, "password": password})
+            auth_resp = get_supabase().auth.sign_in_with_password({"email": email, "password": password})
             supabase_uid = auth_resp.user.id
         except Exception:
             flash("Invalid email or password.", "error")
@@ -263,7 +271,7 @@ def login():
 @app.route("/logout")
 def logout():
     try:
-        supabase.auth.sign_out()
+        get_supabase().auth.sign_out()
     except Exception:
         pass
     session.clear()
@@ -294,7 +302,7 @@ def register():
             return render_template("register.html")
 
         try:
-            auth_resp = supabase.auth.sign_up({"email": email, "password": password})
+            auth_resp = get_supabase().auth.sign_up({"email": email, "password": password})
             if not auth_resp.user:
                 flash("Registration failed. Please try again.", "error")
                 return render_template("register.html")
@@ -409,7 +417,7 @@ def food_search():
 @app.route("/api/food/search")
 @login_required
 def api_food_search():
-    """Search for food using Nutritionix (branded), USDA (generic), and Open Food Facts (packaged)"""
+    """Search for food using Nutritionix (primary) and USDA FoodData Central (fallback)"""
     query = request.args.get('q', '').strip()
 
     if not query:
@@ -563,42 +571,6 @@ def api_food_search():
     except Exception as e:
         print(f"USDA API error: {e}")
 
-    # --- Open Food Facts (community-sourced packaged goods, barcodes, product images) ---
-    try:
-        off_url = (
-            f"https://world.openfoodfacts.org/cgi/search.pl"
-            f"?search_terms={query}&search_simple=1&action=process&json=1&page_size=15"
-        )
-        off_response = requests.get(off_url, timeout=5)
-
-        if off_response.status_code == 200:
-            off_data = off_response.json()
-
-            for product in off_data.get('products', []):
-                nutriments = product.get('nutriments', {})
-                name = product.get('product_name', '')
-                if not name or len(name) > 100:
-                    continue
-
-                products.append({
-                    'name': name,
-                    'brand': product.get('brands', 'Store Brand') or 'Store Brand',
-                    'barcode': product.get('code', ''),
-                    'image': product.get('image_small_url', ''),
-                    'serving_size': product.get('serving_size', '100g'),
-                    'calories': nutriments.get('energy-kcal_100g', nutriments.get('energy-kcal', 0)) or 0,
-                    'protein': nutriments.get('proteins_100g', nutriments.get('proteins', 0)) or 0,
-                    'carbs': nutriments.get('carbohydrates_100g', nutriments.get('carbohydrates', 0)) or 0,
-                    'fat': nutriments.get('fat_100g', nutriments.get('fat', 0)) or 0,
-                    'fiber': nutriments.get('fiber_100g', nutriments.get('fiber', 0)) or 0,
-                    'sugar': nutriments.get('sugars_100g', nutriments.get('sugars', 0)) or 0,
-                    'sodium': (nutriments.get('sodium_100g') or 0) * 1000,
-                    '_relevance': score(name),
-                    '_source': 'off',
-                })
-    except Exception as e:
-        print(f"OpenFoodFacts error: {e}")
-
     # Deduplicate by name+brand, keeping highest relevance
     seen = {}
     for p in products:
@@ -618,38 +590,83 @@ def api_food_search():
 @app.route("/api/food/barcode/<barcode>")
 @login_required
 def api_food_barcode(barcode):
-    """Look up food by barcode using Open Food Facts API"""
+    """Look up food by barcode using Nutritionix (primary) then USDA (fallback)"""
+    # --- Nutritionix barcode search ---
+    if NUTRITIONIX_APP_ID and NUTRITIONIX_APP_KEY:
+        try:
+            nix_url = "https://trackapi.nutritionix.com/v2/search/instant"
+            nix_headers = {
+                "x-app-id": NUTRITIONIX_APP_ID,
+                "x-app-key": NUTRITIONIX_APP_KEY,
+            }
+            nix_response = requests.get(
+                nix_url,
+                headers=nix_headers,
+                params={"query": barcode, "branded": True, "detailed": True},
+                timeout=8,
+            )
+            if nix_response.status_code == 200:
+                items = nix_response.json().get('branded', [])
+                # Match by UPC if available, otherwise take first result
+                match = next((i for i in items if i.get('upc') == barcode), items[0] if items else None)
+                if match:
+                    nf = match.get('full_nutrients', [])
+                    nutrient_map = {n['attr_id']: n['value'] for n in nf}
+                    serving_weight_g = match.get('serving_weight_grams') or 100
+                    factor = 100 / serving_weight_g
+                    return jsonify({
+                        'found': True,
+                        'product': {
+                            'name': match.get('food_name', 'Unknown Product'),
+                            'brand': match.get('brand_name', ''),
+                            'barcode': barcode,
+                            'image': match.get('photo', {}).get('thumb', ''),
+                            'serving_size': f"{match.get('serving_qty', 1)} {match.get('serving_unit', 'serving')}",
+                            'calories': round((nutrient_map.get(208, 0) or 0) * factor, 1),
+                            'protein': round((nutrient_map.get(203, 0) or 0) * factor, 1),
+                            'carbs': round((nutrient_map.get(205, 0) or 0) * factor, 1),
+                            'fat': round((nutrient_map.get(204, 0) or 0) * factor, 1),
+                            'fiber': round((nutrient_map.get(291, 0) or 0) * factor, 1),
+                            'sugar': round((nutrient_map.get(269, 0) or 0) * factor, 1),
+                            'sodium': round((nutrient_map.get(307, 0) or 0) * factor, 1),
+                        }
+                    })
+        except Exception as e:
+            print(f"Nutritionix barcode error: {e}")
+
+    # --- USDA barcode fallback ---
     try:
-        url = f"https://world.openfoodfacts.org/api/v0/product/{barcode}.json"
-        response = requests.get(url, timeout=10)
-        data = response.json()
-        
-        if data.get('status') == 1:
-            product = data.get('product', {})
-            nutriments = product.get('nutriments', {})
-            
-            return jsonify({
-                'found': True,
-                'product': {
-                    'name': product.get('product_name', 'Unknown Product'),
-                    'brand': product.get('brands', ''),
-                    'barcode': barcode,
-                    'image': product.get('image_url', ''),
-                    'serving_size': product.get('serving_size', '100g'),
-                    'calories': nutriments.get('energy-kcal_100g', nutriments.get('energy-kcal', 0)),
-                    'protein': nutriments.get('proteins_100g', nutriments.get('proteins', 0)),
-                    'carbs': nutriments.get('carbohydrates_100g', nutriments.get('carbohydrates', 0)),
-                    'fat': nutriments.get('fat_100g', nutriments.get('fat', 0)),
-                    'fiber': nutriments.get('fiber_100g', nutriments.get('fiber', 0)),
-                    'sugar': nutriments.get('sugars_100g', nutriments.get('sugars', 0)),
-                    'sodium': nutriments.get('sodium_100g', nutriments.get('sodium', 0)) * 1000 if nutriments.get('sodium_100g') else 0,
-                }
-            })
-        else:
-            return jsonify({'found': False, 'message': 'Product not found'})
-    
+        usda_url = (
+            f"https://api.nal.usda.gov/fdc/v1/foods/search"
+            f"?query={barcode}&pageSize=1&dataType=Branded&api_key={USDA_API_KEY}"
+        )
+        usda_response = requests.get(usda_url, timeout=8)
+        if usda_response.status_code == 200:
+            foods = usda_response.json().get('foods', [])
+            if foods:
+                food = foods[0]
+                nutrients = {n['nutrientName']: n['value'] for n in food.get('foodNutrients', [])}
+                return jsonify({
+                    'found': True,
+                    'product': {
+                        'name': food.get('description', 'Unknown Product'),
+                        'brand': food.get('brandOwner', food.get('brandName', '')),
+                        'barcode': barcode,
+                        'image': '',
+                        'serving_size': '100g',
+                        'calories': nutrients.get('Energy', 0) or 0,
+                        'protein': nutrients.get('Protein', 0) or 0,
+                        'carbs': nutrients.get('Carbohydrate, by difference', 0) or 0,
+                        'fat': nutrients.get('Total lipid (fat)', 0) or 0,
+                        'fiber': nutrients.get('Fiber, total dietary', 0) or 0,
+                        'sugar': nutrients.get('Sugars, total including NLEA', nutrients.get('Sugars, total', 0)) or 0,
+                        'sodium': nutrients.get('Sodium, Na', 0) or 0,
+                    }
+                })
     except Exception as e:
-        return jsonify({'found': False, 'error': str(e)})
+        print(f"USDA barcode error: {e}")
+
+    return jsonify({'found': False, 'message': 'Product not found'})
 
 
 @app.route("/api/food/log", methods=['POST'])
