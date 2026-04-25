@@ -1,5 +1,7 @@
 # ⚡ Calquate - Calculate Your Calories
 
+**Live site: [calquate.org](https://calquate.org)**
+
 A modern calorie calculator and nutrition tracking web application built with Flask. Calculate your calories, track your macros, and transform your life.
 
 ![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
