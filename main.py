@@ -4,8 +4,8 @@ from flask import Flask, redirect, url_for, render_template, request, session, f
 from datetime import timedelta, datetime, date
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import DeclarativeBase
-from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
+from supabase import create_client, Client
 
 
 class Base(DeclarativeBase):
@@ -35,6 +35,11 @@ if database_url and database_url.startswith('postgres://'):
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# Supabase client
+_supabase_url = os.environ.get('SUPABASE_URL', '')
+_supabase_key = os.environ.get('SUPABASE_KEY', '')
+supabase: Client = create_client(_supabase_url, _supabase_key)
+
 # API Keys - Get free keys from:
 # Edamam: https://developer.edamam.com/edamam-nutrition-api (Free tier: 10 calls/minute)
 # Spoonacular: https://spoonacular.com/food-api (Free tier: 150 points/day)
@@ -52,10 +57,11 @@ class User(db.Model):
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(20), unique=True, nullable=False)
-    password = db.Column(db.String(256), nullable=False)  # Hashed password
+    password = db.Column(db.String(256), nullable=True)  # kept for legacy rows only
     email = db.Column(db.String(80), unique=True, nullable=False)
+    supabase_id = db.Column(db.String(100), unique=True, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
+
     # User profile data
     height = db.Column(db.Float, nullable=True)  # cm
     weight = db.Column(db.Float, nullable=True)  # kg
@@ -63,18 +69,15 @@ class User(db.Model):
     gender = db.Column(db.String(10), nullable=True)
     activity_level = db.Column(db.Float, default=1.2)
     calorie_goal = db.Column(db.Integer, nullable=True)
-    
+
     # Relationships
     food_logs = db.relationship('FoodLog', backref='user', lazy=True, cascade='all, delete-orphan')
 
-    def __init__(self, username, password, email):
+    def __init__(self, username, email, supabase_id):
         self.username = username
-        self.password = generate_password_hash(password)
         self.email = email
+        self.supabase_id = supabase_id
 
-    def check_password(self, password):
-        return check_password_hash(self.password, password)
-    
     def calculate_bmr(self):
         if not all([self.weight, self.height, self.age, self.gender]):
             return None
@@ -225,27 +228,38 @@ def profile():
 def login():
     if "user_id" in session:
         return redirect(url_for("dashboard"))
-        
+
     if request.method == 'POST':
-        username = request.form['username']
+        email = request.form['email']
         password = request.form['password']
-        
-        user = User.query.filter_by(username=username).first()
-        
-        if user and user.check_password(password):
-            session.permanent = True
-            session["user_id"] = user.id
-            session["username"] = user.username
-            flash("Welcome back, " + user.username + "!", "success")
-            return redirect(url_for("dashboard"))
-        else:
-            flash("Invalid username or password.", "error")
-    
+
+        try:
+            auth_resp = supabase.auth.sign_in_with_password({"email": email, "password": password})
+            supabase_uid = auth_resp.user.id
+        except Exception:
+            flash("Invalid email or password.", "error")
+            return render_template("login.html")
+
+        user = User.query.filter_by(supabase_id=supabase_uid).first()
+        if not user:
+            flash("Account not found. Please register.", "error")
+            return render_template("login.html")
+
+        session.permanent = True
+        session["user_id"] = user.id
+        session["username"] = user.username
+        flash("Welcome back, " + user.username + "!", "success")
+        return redirect(url_for("dashboard"))
+
     return render_template("login.html")
 
 
 @app.route("/logout")
 def logout():
+    try:
+        supabase.auth.sign_out()
+    except Exception:
+        pass
     session.clear()
     flash("You have been logged out.", "info")
     return redirect(url_for("home"))
@@ -255,40 +269,49 @@ def logout():
 def register():
     if "user_id" in session:
         return redirect(url_for("dashboard"))
-        
+
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
         email = request.form['email']
-        
-        # Validation
+
         if len(username) < 3:
             flash("Username must be at least 3 characters.", "error")
             return render_template("register.html")
-        
+
         if len(password) < 6:
             flash("Password must be at least 6 characters.", "error")
             return render_template("register.html")
-        
+
         if User.query.filter_by(username=username).first():
             flash("Username already taken.", "error")
             return render_template("register.html")
-        
-        if User.query.filter_by(email=email).first():
-            flash("Email already registered.", "error")
+
+        try:
+            auth_resp = supabase.auth.sign_up({"email": email, "password": password})
+            if not auth_resp.user:
+                flash("Registration failed. Please try again.", "error")
+                return render_template("register.html")
+            supabase_uid = auth_resp.user.id
+        except Exception as e:
+            msg = str(e).lower()
+            if "already" in msg or "registered" in msg:
+                flash("Email already registered.", "error")
+            else:
+                flash("Registration error: " + str(e), "error")
             return render_template("register.html")
-        
-        new_user = User(username, password, email)
+
+        new_user = User(username=username, email=email, supabase_id=supabase_uid)
         db.session.add(new_user)
         db.session.commit()
-        
+
         session.permanent = True
         session["user_id"] = new_user.id
         session["username"] = new_user.username
-        
+
         flash("Account created! Let's set up your profile.", "success")
         return redirect(url_for("profile"))
-    
+
     return render_template("register.html")
 
 
