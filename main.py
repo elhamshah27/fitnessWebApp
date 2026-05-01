@@ -69,24 +69,30 @@ db.init_app(app)
 def init_db():
     """Create tables and handle schema migrations."""
     with app.app_context():
-        try:
-            # Create all tables that don't exist
-            db.create_all()
+        # Create all tables that don't exist
+        db.create_all()
 
-            # Add missing columns to existing tables (schema migration)
-            with db.engine.begin() as conn:
-                inspector = db.inspect(db.engine)
-                columns = [col['name'] for col in inspector.get_columns('users')]
+        # Migrate existing tables (add missing columns)
+        with db.engine.begin() as conn:
+            is_sqlite = 'sqlite' in str(db.engine.url)
 
-                # Add supabase_id column if it doesn't exist
-                if 'supabase_id' not in columns:
-                    conn.exec_driver_sql(
-                        'ALTER TABLE users ADD COLUMN supabase_id VARCHAR(100) UNIQUE'
-                    )
-        except Exception as e:
-            # Table might not exist yet, or column already exists
-            # SQLAlchemy will create tables on first access if needed
-            pass
+            # Check if supabase_id column exists
+            inspector = db.inspect(db.engine)
+            try:
+                existing_cols = [col['name'] for col in inspector.get_columns('users')]
+                if 'supabase_id' not in existing_cols:
+                    # Column is missing, add it
+                    if is_sqlite:
+                        conn.exec_driver_sql(
+                            'ALTER TABLE users ADD COLUMN supabase_id VARCHAR(100) UNIQUE'
+                        )
+                    else:
+                        conn.exec_driver_sql(
+                            'ALTER TABLE users ADD COLUMN IF NOT EXISTS supabase_id VARCHAR(100) UNIQUE'
+                        )
+            except Exception as e:
+                # Column might already exist - that's OK
+                pass
 
 
 # ============== DATABASE MODELS ==============
@@ -157,6 +163,10 @@ class FoodLog(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+# Initialize database schema (must come after all models are defined)
+init_db()
+
+
 # Create all tables after models are defined
 # Only create tables if not in Vercel serverless environment
 # (Tables should be created via migrations or manually on Vercel Postgres)
@@ -194,10 +204,6 @@ def get_current_user():
             session.clear()
         return user
     return None
-
-
-# Initialize database schema
-init_db()
 
 
 # ============== ROUTES ==============
