@@ -286,7 +286,7 @@ def login():
         password = request.form['password']
 
         try:
-            auth_resp = get_supabase().auth.sign_in_with_password(email=email, password=password)
+            auth_resp = get_supabase().auth.sign_in_with_password({"email": email, "password": password})
             if not auth_resp or not auth_resp.user:
                 raise Exception("Authentication failed")
             supabase_uid = auth_resp.user.id
@@ -343,7 +343,7 @@ def register():
             return render_template("register.html")
 
         try:
-            auth_resp = get_supabase().auth.sign_up(email=email, password=password)
+            auth_resp = get_supabase().auth.sign_up({"email": email, "password": password})
             if not auth_resp or not auth_resp.user:
                 flash("Registration failed. Please try again.", "error")
                 return render_template("register.html")
