@@ -286,20 +286,10 @@ def login():
         password = request.form['password']
 
         try:
-            # Use Supabase REST API for password login (more reliable than SDK)
-            url = f"{os.environ.get('SUPABASE_URL')}/auth/v1/token?grant_type=password"
-            headers = {
-                "apikey": os.environ.get('SUPABASE_KEY'),
-                "Content-Type": "application/json"
-            }
-            data = {"email": email, "password": password}
-            response = requests.post(url, json=data, headers=headers)
-
-            if response.status_code != 200:
-                raise Exception(f"Supabase auth failed: {response.text}")
-
-            auth_data = response.json()
-            supabase_uid = auth_data['user']['id']
+            auth_resp = get_supabase().auth.sign_in_with_password(email=email, password=password)
+            if not auth_resp or not auth_resp.user:
+                raise Exception("Authentication failed")
+            supabase_uid = auth_resp.user.id
         except Exception as e:
             print(f"Supabase auth error: {str(e)}")
             flash(f"Login failed: {str(e)}", "error")
