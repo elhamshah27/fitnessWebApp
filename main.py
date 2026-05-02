@@ -563,6 +563,7 @@ def api_food_search():
                     })
         except Exception as e:
             print(f"Nutritionix error: {e}")
+            # Rate limit or network error — continue to USDA as fallback
 
     # --- USDA FoodData Central (authoritative generic + branded fallback) ---
     try:
@@ -611,12 +612,27 @@ def api_food_search():
                 })
     except Exception as e:
         print(f"USDA API error: {e}")
+        # Rate limit or network error — continue with what we have
 
-    # Deduplicate by name+brand, keeping highest relevance
+    # Deduplicate: group similar items (e.g., "chicken breast, raw" and "chicken breast, cooked")
+    # by base name + brand, keep only the highest-relevance variant
     seen = {}
     for p in products:
-        key = (p['name'].lower(), p['brand'].lower())
-        if key not in seen or p['_relevance'] > seen[key]['_relevance']:
+        # Extract base name (before common prep modifiers)
+        base_name = p['name'].lower()
+        for mod in [', raw', ', cooked', ', dried', ', frozen', ', canned', ', fresh', ', boiled', ', grilled', ', fried']:
+            if base_name.endswith(mod):
+                base_name = base_name[:-len(mod)]
+                break
+
+        key = (base_name, p['brand'].lower())
+        # Keep product if it's new or has higher relevance (prefer primary source and exact matches)
+        if key not in seen:
+            seen[key] = p
+        elif p['_relevance'] > seen[key]['_relevance']:
+            seen[key] = p
+        elif p['_relevance'] == seen[key]['_relevance'] and p['_source'] == 'nutritionix_common':
+            # For same relevance, prefer Nutritionix common over USDA (more curated)
             seen[key] = p
 
     results = sorted(seen.values(), key=lambda x: (-x['_relevance'], len(x['name'])))
@@ -625,7 +641,7 @@ def api_food_search():
         p.pop('_relevance', None)
         p.pop('_source', None)
 
-    return jsonify({'products': results[:25]})
+    return jsonify({'products': results[:25] if results else []})
 
 
 @app.route("/api/food/barcode/<barcode>")
