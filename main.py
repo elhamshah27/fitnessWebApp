@@ -23,14 +23,13 @@ app.jinja_env.globals.update(min=min, max=max)
 # Configuration - Use environment variables in production
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 app.permanent_session_lifetime = timedelta(days=5)
-# For Vercel: Use Vercel Postgres or external database
+# For Vercel: Use Supabase Postgres or Vercel Postgres
 # SQLite won't work on Vercel (read-only filesystem)
-# Get connection string from Vercel Postgres dashboard
-database_url = os.environ.get('DATABASE_URL')
+database_url = os.environ.get('DATABASE_POSTGRES_URL') or os.environ.get('DATABASE_URL')
 if not database_url:
     # Fallback to SQLite for local development only
     database_url = 'sqlite:///database.db'
-    
+
 # Convert Vercel Postgres URL format if needed
 if database_url and database_url.startswith('postgres://'):
     database_url = database_url.replace('postgres://', 'postgresql://', 1)
