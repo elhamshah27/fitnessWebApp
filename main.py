@@ -288,8 +288,9 @@ def login():
         try:
             auth_resp = get_supabase().auth.sign_in_with_password({"email": email, "password": password})
             supabase_uid = auth_resp.user.id
-        except Exception:
-            flash("Invalid email or password.", "error")
+        except Exception as e:
+            print(f"Supabase auth error: {str(e)}")
+            flash(f"Login failed: {str(e)}", "error")
             return render_template("login.html")
 
         user = User.query.filter_by(supabase_id=supabase_uid).first()
