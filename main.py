@@ -67,31 +67,36 @@ db.init_app(app)
 # Database initialization and schema migrations
 def init_db():
     """Create tables and handle schema migrations."""
-    with app.app_context():
-        # Create all tables that don't exist
-        db.create_all()
+    try:
+        with app.app_context():
+            # Create all tables that don't exist
+            db.create_all()
 
-        # Migrate existing tables (add missing columns)
-        with db.engine.begin() as conn:
-            is_sqlite = 'sqlite' in str(db.engine.url)
+            # Migrate existing tables (add missing columns)
+            with db.engine.begin() as conn:
+                is_sqlite = 'sqlite' in str(db.engine.url)
 
-            # Check if supabase_id column exists
-            inspector = db.inspect(db.engine)
-            try:
-                existing_cols = [col['name'] for col in inspector.get_columns('users')]
-                if 'supabase_id' not in existing_cols:
-                    # Column is missing, add it
-                    if is_sqlite:
-                        conn.exec_driver_sql(
-                            'ALTER TABLE users ADD COLUMN supabase_id VARCHAR(100) UNIQUE'
-                        )
-                    else:
-                        conn.exec_driver_sql(
-                            'ALTER TABLE users ADD COLUMN IF NOT EXISTS supabase_id VARCHAR(100) UNIQUE'
-                        )
-            except Exception as e:
-                # Column might already exist - that's OK
-                pass
+                # Check if supabase_id column exists
+                inspector = db.inspect(db.engine)
+                try:
+                    existing_cols = [col['name'] for col in inspector.get_columns('users')]
+                    if 'supabase_id' not in existing_cols:
+                        # Column is missing, add it
+                        if is_sqlite:
+                            conn.exec_driver_sql(
+                                'ALTER TABLE users ADD COLUMN supabase_id VARCHAR(100) UNIQUE'
+                            )
+                        else:
+                            conn.exec_driver_sql(
+                                'ALTER TABLE users ADD COLUMN IF NOT EXISTS supabase_id VARCHAR(100) UNIQUE'
+                            )
+                except Exception:
+                    # Column might already exist - that's OK
+                    pass
+    except Exception:
+        # Database connection failed at startup - that's OK for serverless
+        # The app will still start, and database operations will fail gracefully
+        pass
 
 
 # ============== DATABASE MODELS ==============
