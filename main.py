@@ -50,15 +50,8 @@ def get_supabase() -> Client:
         _supabase_client = create_client(url, key)
     return _supabase_client
 
-# API Keys - Get free keys from:
-# Edamam: https://developer.edamam.com/edamam-nutrition-api (Free tier: 10 calls/minute)
-# Spoonacular: https://spoonacular.com/food-api (Free tier: 150 points/day)
-EDAMAM_APP_ID = os.environ.get('EDAMAM_APP_ID', '')
-EDAMAM_APP_KEY = os.environ.get('EDAMAM_APP_KEY', '')
-SPOONACULAR_API_KEY = os.environ.get('SPOONACULAR_API_KEY', '')
-NUTRITIONIX_APP_ID = os.environ.get('NUTRITIONIX_APP_ID', '')
-NUTRITIONIX_APP_KEY = os.environ.get('NUTRITIONIX_APP_KEY', '')
-USDA_API_KEY = os.environ.get('USDA_API_KEY', 'DEMO_KEY')
+# FatSecret API is configured in food_apis.py
+# USDA fallback also configured in food_apis.py
 
 db = SQLAlchemy(model_class=Base)
 db.init_app(app)
@@ -165,6 +158,30 @@ class FoodLog(db.Model):
     sodium = db.Column(db.Float, default=0)   # mg
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class CommonFood(db.Model):
+    __tablename__ = 'common_foods'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False)
+    name_simple = db.Column(db.String(100), nullable=False, index=True)
+    brand = db.Column(db.String(100), default='Generic')
+    serving_size = db.Column(db.String(50), default='100g')
+    calories = db.Column(db.Float, default=0)
+    protein = db.Column(db.Float, default=0)
+    carbs = db.Column(db.Float, default=0)
+    fat = db.Column(db.Float, default=0)
+    fiber = db.Column(db.Float, default=0)
+    sugar = db.Column(db.Float, default=0)
+    sodium = db.Column(db.Float, default=0)
+
+
+class FoodCache(db.Model):
+    __tablename__ = 'food_cache'
+    id = db.Column(db.Integer, primary_key=True)
+    query_key = db.Column(db.String(200), nullable=False, unique=True, index=True)
+    results_json = db.Column(db.Text, nullable=False)
+    fetched_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
 
 # Initialize database schema (must come after all models are defined)
@@ -458,270 +475,120 @@ def food_search():
 @app.route("/api/food/search")
 @login_required
 def api_food_search():
-    """Search for food using Nutritionix (primary) and USDA FoodData Central (fallback)"""
-    query = request.args.get('q', '').strip()
+    """Local-first search: CommonFood > Cache > FatSecret API > USDA fallback"""
+    from food_apis import search_fatsecret, search_usda
+    import json
 
+    query = request.args.get('q', '').strip()
     if not query:
         return jsonify({'products': []})
 
-    query_lower = query.lower()
-    products = []
+    query_key = query.lower().strip()
+    all_products = []
+    cache_miss = True
 
-    def score(name, data_type=None):
-        n = name.lower()
-        r = 0
-        if n == query_lower:
-            r = 100
-        elif n.startswith(query_lower):
-            r = 80
-        elif query_lower in n and len(query_lower) > len(n) * 0.3:
-            r = 60
-        elif query_lower in n:
-            r = 40
-        if data_type in ['Foundation', 'SR Legacy']:
-            r += 30
-        elif data_type == 'Survey (FNDDS)':
-            r += 20
-        if len(name) < 30:
-            r += 10
-        return r
+    # Step 1: CommonFood table (instant, no API)
+    common_hits = CommonFood.query.filter(
+        CommonFood.name_simple.ilike(f'%{query_key}%')
+    ).limit(10).all()
 
-    # --- Nutritionix (best for branded/packaged: Oreos, Kraft, Target brands, restaurants) ---
-    if NUTRITIONIX_APP_ID and NUTRITIONIX_APP_KEY:
-        try:
-            nix_url = "https://trackapi.nutritionix.com/v2/search/instant"
-            nix_headers = {
-                "x-app-id": NUTRITIONIX_APP_ID,
-                "x-app-key": NUTRITIONIX_APP_KEY,
-                "Content-Type": "application/json",
-            }
-            nix_response = requests.get(
-                nix_url,
-                headers=nix_headers,
-                params={"query": query, "branded": True, "common": True, "detailed": True},
-                timeout=8,
-            )
-            if nix_response.status_code == 200:
-                nix_data = nix_response.json()
+    for food in common_hits:
+        all_products.append({
+            'name': food.name,
+            'brand': food.brand,
+            'barcode': '',
+            'image': '',
+            'serving_size': food.serving_size,
+            'calories': food.calories,
+            'protein': food.protein,
+            'carbs': food.carbs,
+            'fat': food.fat,
+            'fiber': food.fiber,
+            'sugar': food.sugar,
+            'sodium': food.sodium,
+            '_source': 'common',
+        })
 
-                # Branded foods (Oreos, packaged products, restaurant items)
-                for item in nix_data.get('branded', []):
-                    name = item.get('food_name', '')
-                    if not name or len(name) > 120:
-                        continue
-                    nf = item.get('full_nutrients', [])
-                    # Nutritionix nutrient IDs: 208=calories, 203=protein, 205=carbs, 204=fat, 291=fiber, 269=sugar, 307=sodium
-                    nutrient_map = {n['attr_id']: n['value'] for n in nf}
-                    serving_qty = item.get('serving_qty', 1)
-                    serving_unit = item.get('serving_unit', 'serving')
-                    serving_weight_g = item.get('serving_weight_grams') or 100
+    # Step 2: FoodCache lookup (TTL 7 days)
+    CACHE_TTL_DAYS = 7
+    cached = FoodCache.query.filter_by(query_key=query_key).first()
+    if cached:
+        age = datetime.utcnow() - cached.fetched_at
+        if age.days < CACHE_TTL_DAYS:
+            cached_products = json.loads(cached.results_json)
+            all_products.extend(cached_products)
+            cache_miss = False
 
-                    # Normalize to per-100g so it's consistent with other sources
-                    factor = 100 / serving_weight_g if serving_weight_g else 1
+    # Steps 3 & 4: API calls only on cache miss
+    if cache_miss:
+        api_products = []
 
-                    products.append({
-                        'name': name,
-                        'brand': item.get('brand_name', 'Branded') or 'Branded',
-                        'barcode': item.get('upc', ''),
-                        'image': item.get('photo', {}).get('thumb', ''),
-                        'serving_size': f"{serving_qty} {serving_unit}",
-                        'calories': round((nutrient_map.get(208, 0) or 0) * factor, 1),
-                        'protein': round((nutrient_map.get(203, 0) or 0) * factor, 1),
-                        'carbs': round((nutrient_map.get(205, 0) or 0) * factor, 1),
-                        'fat': round((nutrient_map.get(204, 0) or 0) * factor, 1),
-                        'fiber': round((nutrient_map.get(291, 0) or 0) * factor, 1),
-                        'sugar': round((nutrient_map.get(269, 0) or 0) * factor, 1),
-                        'sodium': round((nutrient_map.get(307, 0) or 0) * factor, 1),
-                        '_relevance': score(name) + 10,  # slight boost for verified branded data
-                        '_source': 'nutritionix_branded',
-                    })
+        # FatSecret (primary — 5000 calls/day free)
+        fs_results = search_fatsecret(query)
+        api_products.extend(fs_results)
 
-                # Common foods (raw ingredients, generic items)
-                for item in nix_data.get('common', []):
-                    name = item.get('food_name', '')
-                    if not name or len(name) > 100:
-                        continue
-                    nf = item.get('full_nutrients', [])
-                    nutrient_map = {n['attr_id']: n['value'] for n in nf}
-                    serving_weight_g = item.get('serving_weight_grams') or 100
-                    factor = 100 / serving_weight_g if serving_weight_g else 1
-                    products.append({
-                        'name': name.title(),
-                        'brand': 'Generic',
-                        'barcode': '',
-                        'image': item.get('photo', {}).get('thumb', ''),
-                        'serving_size': f"{item.get('serving_qty', 1)} {item.get('serving_unit', 'serving')}",
-                        'calories': round((nutrient_map.get(208, 0) or 0) * factor, 1),
-                        'protein': round((nutrient_map.get(203, 0) or 0) * factor, 1),
-                        'carbs': round((nutrient_map.get(205, 0) or 0) * factor, 1),
-                        'fat': round((nutrient_map.get(204, 0) or 0) * factor, 1),
-                        'fiber': round((nutrient_map.get(291, 0) or 0) * factor, 1),
-                        'sugar': round((nutrient_map.get(269, 0) or 0) * factor, 1),
-                        'sodium': round((nutrient_map.get(307, 0) or 0) * factor, 1),
-                        '_relevance': score(name) + 25,  # common foods are very relevant
-                        '_source': 'nutritionix_common',
-                    })
-        except Exception as e:
-            print(f"Nutritionix error: {e}")
-            # Rate limit or network error — continue to USDA as fallback
+        # USDA fallback
+        if not fs_results:
+            usda_results = search_usda(query)
+            api_products.extend(usda_results)
 
-    # --- USDA FoodData Central (authoritative generic + branded fallback) ---
-    try:
-        usda_url = (
-            f"https://api.nal.usda.gov/fdc/v1/foods/search"
-            f"?query={query}&pageSize=20"
-            f"&dataType=Foundation,SR%20Legacy,Survey%20(FNDDS),Branded"
-            f"&api_key={USDA_API_KEY}"
-        )
-        usda_response = requests.get(usda_url, timeout=8)
+        # Save to cache (upsert pattern)
+        if api_products:
+            clean = [{k: v for k, v in p.items() if not k.startswith('_')}
+                     for p in api_products]
+            if cached:
+                cached.results_json = json.dumps(clean)
+                cached.fetched_at = datetime.utcnow()
+            else:
+                db.session.add(FoodCache(
+                    query_key=query_key,
+                    results_json=json.dumps(clean),
+                ))
+            try:
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
 
-        if usda_response.status_code == 200:
-            usda_data = usda_response.json()
+        all_products.extend(api_products)
 
-            for food in usda_data.get('foods', []):
-                nutrients = {n['nutrientName']: n['value'] for n in food.get('foodNutrients', [])}
-                data_type = food.get('dataType', '')
-                brand = food.get('brandOwner', '') or food.get('brandName', '')
-
-                if data_type in ['Foundation', 'SR Legacy']:
-                    brand = 'Generic'
-                elif data_type == 'Survey (FNDDS)':
-                    brand = 'USDA Standard'
-                elif not brand:
-                    brand = 'Branded'
-
-                name = food.get('description', '')
-                if not name or len(name) > 100:
-                    continue
-
-                products.append({
-                    'name': name,
-                    'brand': brand,
-                    'barcode': food.get('gtinUpc', ''),
-                    'image': '',
-                    'serving_size': '100g',
-                    'calories': nutrients.get('Energy', 0) or 0,
-                    'protein': nutrients.get('Protein', 0) or 0,
-                    'carbs': nutrients.get('Carbohydrate, by difference', 0) or 0,
-                    'fat': nutrients.get('Total lipid (fat)', 0) or 0,
-                    'fiber': nutrients.get('Fiber, total dietary', 0) or 0,
-                    'sugar': nutrients.get('Sugars, total including NLEA', nutrients.get('Sugars, total', 0)) or 0,
-                    'sodium': nutrients.get('Sodium, Na', 0) or 0,
-                    '_relevance': score(name, data_type),
-                    '_source': 'usda',
-                })
-    except Exception as e:
-        print(f"USDA API error: {e}")
-        # Rate limit or network error — continue with what we have
-
-    # Deduplicate: group similar items (e.g., "chicken breast, raw" and "chicken breast, cooked")
-    # by base name + brand, keep only the highest-relevance variant
+    # Merge and deduplicate
+    SOURCE_PRIORITY = {'common': 0, 'fatsecret': 1, 'usda': 2, '': 1}
     seen = {}
-    for p in products:
-        # Extract base name (before common prep modifiers)
-        base_name = p['name'].lower()
-        for mod in [', raw', ', cooked', ', dried', ', frozen', ', canned', ', fresh', ', boiled', ', grilled', ', fried']:
-            if base_name.endswith(mod):
-                base_name = base_name[:-len(mod)]
-                break
-
-        key = (base_name, p['brand'].lower())
-        # Keep product if it's new or has higher relevance (prefer primary source and exact matches)
+    for p in all_products:
+        key = (p['name'].lower()[:40], p['brand'].lower()[:20])
         if key not in seen:
             seen[key] = p
-        elif p['_relevance'] > seen[key]['_relevance']:
-            seen[key] = p
-        elif p['_relevance'] == seen[key]['_relevance'] and p['_source'] == 'nutritionix_common':
-            # For same relevance, prefer Nutritionix common over USDA (more curated)
-            seen[key] = p
+        else:
+            existing_priority = SOURCE_PRIORITY.get(seen[key].get('_source', ''), 1)
+            this_priority = SOURCE_PRIORITY.get(p.get('_source', ''), 1)
+            if this_priority < existing_priority:
+                seen[key] = p
 
-    results = sorted(seen.values(), key=lambda x: (-x['_relevance'], len(x['name'])))
+    results = list(seen.values())
+    results.sort(key=lambda p: (0 if p.get('_source') == 'common' else 1, len(p['name'])))
 
     for p in results:
-        p.pop('_relevance', None)
         p.pop('_source', None)
 
-    return jsonify({'products': results[:25] if results else []})
+    return jsonify({'products': results[:25]})
 
 
 @app.route("/api/food/barcode/<barcode>")
 @login_required
 def api_food_barcode(barcode):
-    """Look up food by barcode using Nutritionix (primary) then USDA (fallback)"""
-    # --- Nutritionix barcode search ---
-    if NUTRITIONIX_APP_ID and NUTRITIONIX_APP_KEY:
-        try:
-            nix_url = "https://trackapi.nutritionix.com/v2/search/instant"
-            nix_headers = {
-                "x-app-id": NUTRITIONIX_APP_ID,
-                "x-app-key": NUTRITIONIX_APP_KEY,
-            }
-            nix_response = requests.get(
-                nix_url,
-                headers=nix_headers,
-                params={"query": barcode, "branded": True, "detailed": True},
-                timeout=8,
-            )
-            if nix_response.status_code == 200:
-                items = nix_response.json().get('branded', [])
-                # Match by UPC if available, otherwise take first result
-                match = next((i for i in items if i.get('upc') == barcode), items[0] if items else None)
-                if match:
-                    nf = match.get('full_nutrients', [])
-                    nutrient_map = {n['attr_id']: n['value'] for n in nf}
-                    serving_weight_g = match.get('serving_weight_grams') or 100
-                    factor = 100 / serving_weight_g
-                    return jsonify({
-                        'found': True,
-                        'product': {
-                            'name': match.get('food_name', 'Unknown Product'),
-                            'brand': match.get('brand_name', ''),
-                            'barcode': barcode,
-                            'image': match.get('photo', {}).get('thumb', ''),
-                            'serving_size': f"{match.get('serving_qty', 1)} {match.get('serving_unit', 'serving')}",
-                            'calories': round((nutrient_map.get(208, 0) or 0) * factor, 1),
-                            'protein': round((nutrient_map.get(203, 0) or 0) * factor, 1),
-                            'carbs': round((nutrient_map.get(205, 0) or 0) * factor, 1),
-                            'fat': round((nutrient_map.get(204, 0) or 0) * factor, 1),
-                            'fiber': round((nutrient_map.get(291, 0) or 0) * factor, 1),
-                            'sugar': round((nutrient_map.get(269, 0) or 0) * factor, 1),
-                            'sodium': round((nutrient_map.get(307, 0) or 0) * factor, 1),
-                        }
-                    })
-        except Exception as e:
-            print(f"Nutritionix barcode error: {e}")
+    """Look up food by barcode using USDA FoodData Central API"""
+    from food_apis import search_usda
 
-    # --- USDA barcode fallback ---
     try:
-        usda_url = (
-            f"https://api.nal.usda.gov/fdc/v1/foods/search"
-            f"?query={barcode}&pageSize=1&dataType=Branded&api_key={USDA_API_KEY}"
-        )
-        usda_response = requests.get(usda_url, timeout=8)
-        if usda_response.status_code == 200:
-            foods = usda_response.json().get('foods', [])
-            if foods:
-                food = foods[0]
-                nutrients = {n['nutrientName']: n['value'] for n in food.get('foodNutrients', [])}
-                return jsonify({
-                    'found': True,
-                    'product': {
-                        'name': food.get('description', 'Unknown Product'),
-                        'brand': food.get('brandOwner', food.get('brandName', '')),
-                        'barcode': barcode,
-                        'image': '',
-                        'serving_size': '100g',
-                        'calories': nutrients.get('Energy', 0) or 0,
-                        'protein': nutrients.get('Protein', 0) or 0,
-                        'carbs': nutrients.get('Carbohydrate, by difference', 0) or 0,
-                        'fat': nutrients.get('Total lipid (fat)', 0) or 0,
-                        'fiber': nutrients.get('Fiber, total dietary', 0) or 0,
-                        'sugar': nutrients.get('Sugars, total including NLEA', nutrients.get('Sugars, total', 0)) or 0,
-                        'sodium': nutrients.get('Sodium, Na', 0) or 0,
-                    }
-                })
+        results = search_usda(barcode)
+        if results:
+            product = results[0]
+            return jsonify({
+                'found': True,
+                'product': product
+            })
     except Exception as e:
-        print(f"USDA barcode error: {e}")
+        print(f"USDA barcode lookup error: {e}")
 
     return jsonify({'found': False, 'message': 'Product not found'})
 
